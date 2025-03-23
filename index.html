@@ -1,0 +1,1642 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Adding Database Support to College Manager</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 1rem;
+      }
+      h1,
+      h2,
+      h3 {
+        color: #2c3e50;
+        margin-top: 2rem;
+      }
+      pre {
+        background: #f8f9fa;
+        border-radius: 4px;
+        padding: 1rem;
+        overflow-x: auto;
+        border: 1px solid #e9ecef;
+        width: calc(100% - 2rem);
+      }
+      .keyword {
+        color: #0033b3;
+      }
+      .string {
+        color: #067d17;
+      }
+      .comment {
+        color: #8c8c8c;
+      }
+      .number {
+        color: #1750eb;
+      }
+      .type {
+        color: #000080;
+      }
+      .tip {
+        background: #e3f2fd;
+        padding: 1rem;
+        border-radius: 4px;
+        margin: 1rem 0;
+      }
+      .warning {
+        background: #fff3e0;
+        padding: 1rem;
+        border-radius: 4px;
+        margin: 1rem 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Adding Database Support to Our College Manager! 💾</h1>
+
+    <p>
+      So far, our College Manager has been working great with in-memory data. But when we restart the application, all
+      our data disappears! Let's fix that by adding database support.
+    </p>
+
+    <div class="tip">
+      <strong>What we'll build:</strong> We'll add database storage to our College Manager web application without
+      changing our existing model classes. This means:
+      <ul>
+        <li>Your existing model classes (Student, Course, CollegeManager) stay exactly the same</li>
+        <li>Your existing Main class for testing will continue to work as before</li>
+        <li>We'll add a new database layer just for the web application</li>
+      </ul>
+    </div>
+
+    <h2>The Big Picture 🖼️</h2>
+
+    <p>Before we dive into code, let's understand what we're building:</p>
+
+    <ol>
+      <li><strong>Database:</strong> We'll use H2, a lightweight Java database, to store our data</li>
+      <li><strong>Data Access Objects (DAOs):</strong> We'll create classes that handle saving and loading data</li>
+      <li>
+        <strong>Servlet Integration:</strong> Our servlet will:
+        <ul>
+          <li>Load data from the database on startup</li>
+          <li>Save changes to the database when forms are submitted</li>
+        </ul>
+      </li>
+    </ol>
+
+    <p>
+      The beauty of this approach is that the CollegeManager class and all your models stay unchanged. We're simply
+      adding persistence around them!
+    </p>
+
+    <h2>Step 1: Setting Up H2 Database 🔧</h2>
+
+    <p>We'll use H2, a lightweight Java database that's perfect for development:</p>
+
+    <h3>First, add the H2 dependency to your project:</h3>
+
+    <p>If you're using Maven, add this to your pom.xml:</p>
+
+    <pre>&lt;<span class="keyword">dependency</span>&gt;
+    &lt;<span class="keyword">groupId</span>&gt;com.h2database&lt;/<span class="keyword">groupId</span>&gt;
+    &lt;<span class="keyword">artifactId</span>&gt;h2&lt;/<span class="keyword">artifactId</span>&gt;
+    &lt;<span class="keyword">version</span>&gt;2.2.224&lt;/<span class="keyword">version</span>&gt;
+&lt;/<span class="keyword">dependency</span>&gt;</pre>
+
+    <p>If you're using Gradle, add this to your build.gradle:</p>
+
+    <pre><span class="keyword">implementation</span> <span class="string">'com.h2database:h2:2.2.224'</span></pre>
+
+    <div class="tip">
+      <strong>Why H2?</strong> It's lightweight, doesn't require installation, and can run in-memory or save to a file.
+      Perfect for learning database interaction!
+    </div>
+
+    <h2>Step 2: Creating a Database Connection Utility 🔌</h2>
+
+    <p>Let's create a simple utility class to manage our database connections:</p>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.db;
+
+<span class="keyword">import</span> java.sql.Connection;
+<span class="keyword">import</span> java.sql.DriverManager;
+<span class="keyword">import</span> java.sql.SQLException;
+
+<span class="keyword">public class</span> DbUtil {
+    <span class="comment">// JDBC URL for H2 database - creates/uses a file in user home directory</span>
+    <span class="keyword">private static final</span> String JDBC_URL = <span class="string">"jdbc:h2:~/collegemanager;DB_CLOSE_DELAY=-1"</span>;
+    <span class="keyword">private static final</span> String USER = <span class="string">"sa"</span>;
+    <span class="keyword">private static final</span> String PASSWORD = <span class="string">""</span>;
+    
+    <span class="comment">// Static block to load the JDBC driver</span>
+    <span class="keyword">static</span> {
+        <span class="keyword">try</span> {
+            Class.forName(<span class="string">"org.h2.Driver"</span>);
+            System.out.println(<span class="string">"H2 JDBC driver loaded successfully."</span>);
+        } <span class="keyword">catch</span> (ClassNotFoundException e) {
+            System.err.println(<span class="string">"H2 JDBC Driver not found!"</span>);
+            e.printStackTrace();
+        }
+    }
+    
+    <span class="comment">/**
+     * Get a database connection
+     * @return a new database connection
+     * @throws SQLException if connection fails
+     */</span>
+    <span class="keyword">public static</span> Connection getConnection() <span class="keyword">throws</span> SQLException {
+        <span class="keyword">return</span> DriverManager.getConnection(JDBC_URL, USER, PASSWORD);
+    }
+    
+    <span class="comment">/**
+     * Close a connection quietly (without throwing exceptions)
+     * @param connection the connection to close
+     */</span>
+    <span class="keyword">public static void</span> closeQuietly(Connection connection) {
+        <span class="keyword">if</span> (connection != <span class="keyword">null</span>) {
+            <span class="keyword">try</span> {
+                connection.close();
+            } <span class="keyword">catch</span> (SQLException e) {
+                System.err.println(<span class="string">"Error closing connection: "</span> + e.getMessage());
+            }
+        }
+    }
+}</pre>
+
+    <div class="tip">
+      <strong>What this class does:</strong>
+      <ul>
+        <li>Sets up a JDBC URL that points to an H2 database file in your home directory</li>
+        <li>Loads the H2 driver when the class is loaded</li>
+        <li>Provides a method to get database connections</li>
+        <li>Provides a helper method to safely close connections</li>
+      </ul>
+    </div>
+
+    <h2>Step 3: Creating Our Database Schema 📊</h2>
+
+    <p>Now let's create a class to set up our database tables:</p>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.db;
+
+<span class="keyword">import</span> java.sql.Connection;
+<span class="keyword">import</span> java.sql.SQLException;
+<span class="keyword">import</span> java.sql.Statement;
+
+<span class="keyword">public class</span> SchemaInitializer {
+
+    <span class="keyword">public static void</span> initializeSchema() {
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            
+            <span class="comment">// Create tables</span>
+            Statement stmt = conn.createStatement();
+            
+            <span class="comment">// Create students table</span>
+            stmt.execute(
+                <span class="string">"CREATE TABLE IF NOT EXISTS students ("</span> +
+                <span class="string">"  id INT PRIMARY KEY, "</span> +
+                <span class="string">"  name VARCHAR(100) NOT NULL, "</span> +
+                <span class="string">"  email VARCHAR(100) NOT NULL UNIQUE"</span> +
+                <span class="string">")"</span>
+            );
+            System.out.println(<span class="string">"Students table created."</span>);
+            
+            <span class="comment">// Create courses table</span>
+            stmt.execute(
+                <span class="string">"CREATE TABLE IF NOT EXISTS courses ("</span> +
+                <span class="string">"  code VARCHAR(10) PRIMARY KEY, "</span> +
+                <span class="string">"  title VARCHAR(100) NOT NULL, "</span> +
+                <span class="string">"  credits INT NOT NULL, "</span> +
+                <span class="string">"  instructor VARCHAR(100) NOT NULL"</span> +
+                <span class="string">")"</span>
+            );
+            System.out.println(<span class="string">"Courses table created."</span>);
+            
+            <span class="comment">// Create registrations table (for the many-to-many relationship)</span>
+            stmt.execute(
+                <span class="string">"CREATE TABLE IF NOT EXISTS registrations ("</span> +
+                <span class="string">"  student_id INT, "</span> +
+                <span class="string">"  course_code VARCHAR(10), "</span> +
+                <span class="string">"  PRIMARY KEY (student_id, course_code), "</span> +
+                <span class="string">"  FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE, "</span> +
+                <span class="string">"  FOREIGN KEY (course_code) REFERENCES courses(code) ON DELETE CASCADE"</span> +
+                <span class="string">")"</span>
+            );
+            System.out.println(<span class="string">"Registrations table created."</span>);
+            
+            System.out.println(<span class="string">"Database schema setup complete!"</span>);
+            
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error setting up database: "</span> + e.getMessage());
+            e.printStackTrace();
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+    }
+    
+    <span class="keyword">public static void</span> main(String[] args) {
+        <span class="comment">// Run this method to create the database schema</span>
+        initializeSchema();
+    }
+}</pre>
+
+    <div class="warning">
+      <strong>Notice:</strong> Our database schema matches our object model:
+      <ul>
+        <li>Student: id, name, email</li>
+        <li>Course: code, title, credits, instructor</li>
+        <li>A many-to-many relationship through Registrations</li>
+      </ul>
+      We also added "ON DELETE CASCADE" to automatically remove registrations when a student or course is deleted.
+    </div>
+
+    <h2>Step 4: Testing Our Database Setup 🧪</h2>
+
+    <p>Let's create a simple test class to check if our database is working:</p>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.db;
+
+<span class="keyword">import</span> java.sql.Connection;
+<span class="keyword">import</span> java.sql.PreparedStatement;
+<span class="keyword">import</span> java.sql.ResultSet;
+<span class="keyword">import</span> java.sql.SQLException;
+
+<span class="keyword">public class</span> DbTestMain {
+
+    <span class="keyword">public static void</span> main(String[] args) {
+        <span class="comment">// 1. Initialize the schema</span>
+        SchemaInitializer.initializeSchema();
+        
+        <span class="comment">// 2. Insert a test student</span>
+        insertTestStudent();
+        
+        <span class="comment">// 3. Verify the student was inserted</span>
+        verifyTestStudent();
+    }
+    
+    <span class="keyword">private static void</span> insertTestStudent() {
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            
+            <span class="comment">// Check if test student already exists</span>
+            PreparedStatement checkStmt = conn.prepareStatement(
+                <span class="string">"SELECT COUNT(*) FROM students WHERE id = 9999"</span>);
+            ResultSet rs = checkStmt.executeQuery();
+            rs.next();
+            <span class="keyword">int</span> count = rs.getInt(1);
+            
+            <span class="keyword">if</span> (count == 0) {
+                <span class="comment">// Insert a test student</span>
+                PreparedStatement stmt = conn.prepareStatement(
+                    <span class="string">"INSERT INTO students (id, name, email) VALUES (?, ?, ?)"</span>);
+                stmt.setInt(1, 9999);
+                stmt.setString(2, <span class="string">"Test Student"</span>);
+                stmt.setString(3, <span class="string">"test@example.com"</span>);
+                stmt.executeUpdate();
+                
+                System.out.println(<span class="string">"Test student inserted."</span>);
+            } <span class="keyword">else</span> {
+                System.out.println(<span class="string">"Test student already exists."</span>);
+            }
+            
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error inserting test student: "</span> + e.getMessage());
+            e.printStackTrace();
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+    }
+    
+    <span class="keyword">private static void</span> verifyTestStudent() {
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            
+            <span class="comment">// Query the test student</span>
+            PreparedStatement stmt = conn.prepareStatement(
+                <span class="string">"SELECT * FROM students WHERE id = 9999"</span>);
+            ResultSet rs = stmt.executeQuery();
+            
+            <span class="keyword">if</span> (rs.next()) {
+                String name = rs.getString(<span class="string">"name"</span>);
+                String email = rs.getString(<span class="string">"email"</span>);
+                
+                System.out.println(<span class="string">"Found test student: "</span> + name + <span class="string">" ("</span> + email + <span class="string">")"</span>);
+            } <span class="keyword">else</span> {
+                System.out.println(<span class="string">"Test student not found!"</span>);
+            }
+            
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error verifying test student: "</span> + e.getMessage());
+            e.printStackTrace();
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+    }
+}</pre>
+
+    <div class="tip">
+      <strong>Run this main class!</strong> If everything is set up correctly, it should:
+      <ol>
+        <li>Create the database tables if they don't exist</li>
+        <li>Insert a test student with ID 9999</li>
+        <li>Verify the student was added correctly</li>
+      </ol>
+      Try running it a second time to see that it recognizes the student already exists!
+    </div>
+
+    <h2>What We've Learned 🎓</h2>
+
+    <ul>
+      <li>How to add H2 database support to a Java project</li>
+      <li>Creating a utility class for database connections</li>
+      <li>Setting up database tables that match our object model</li>
+      <li>Basic JDBC operations: executing SQL statements and queries</li>
+      <li>Proper resource management with try-finally and closeQuietly</li>
+    </ul>
+
+    <h2>Step 5: Creating Data Access Objects (DAOs) 🛠️</h2>
+
+    <p>
+      Now that we have our database schema set up, we need to create Data Access Objects (DAOs) that will handle all
+      database operations for our model classes.
+    </p>
+
+    <div class="tip">
+      <strong>What are DAOs?</strong> Data Access Objects provide an abstract interface to a database, separating our
+      business logic from database access code. They handle all the database operations (create, read, update, delete)
+      for a specific entity.
+    </div>
+
+    <h3>Step 5.1: Creating the DAO Interfaces</h3>
+
+    <p>First, let's define interfaces for our DAOs that specify what operations each DAO can perform:</p>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.dao;
+
+<span class="keyword">import</span> com.example.collegemanager.model.Student;
+<span class="keyword">import</span> java.util.List;
+
+<span class="keyword">public interface</span> StudentDAO {
+    
+    <span class="comment">/**
+     * Find a student by ID
+     * @param id the student ID
+     * @return the student or null if not found
+     */</span>
+    Student findById(<span class="keyword">int</span> id);
+    
+    <span class="comment">/**
+     * Get all students
+     * @return list of all students
+     */</span>
+    List&lt;Student&gt; findAll();
+    
+    <span class="comment">/**
+     * Save a student (insert if new, update if existing)
+     * @param student the student to save
+     * @return true if successful
+     */</span>
+    <span class="keyword">boolean</span> save(Student student);
+    
+    <span class="comment">/**
+     * Delete a student
+     * @param id the student ID
+     * @return true if successful
+     */</span>
+    <span class="keyword">boolean</span> delete(<span class="keyword">int</span> id);
+}</pre>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.dao;
+
+<span class="keyword">import</span> com.example.collegemanager.model.Course;
+<span class="keyword">import</span> java.util.List;
+
+<span class="keyword">public interface</span> CourseDAO {
+    
+    <span class="comment">/**
+     * Find a course by code
+     * @param code the course code
+     * @return the course or null if not found
+     */</span>
+    Course findByCode(String code);
+    
+    <span class="comment">/**
+     * Get all courses
+     * @return list of all courses
+     */</span>
+    List&lt;Course&gt; findAll();
+    
+    <span class="comment">/**
+     * Save a course (insert if new, update if existing)
+     * @param course the course to save
+     * @return true if successful
+     */</span>
+    <span class="keyword">boolean</span> save(Course course);
+    
+    <span class="comment">/**
+     * Delete a course
+     * @param code the course code
+     * @return true if successful
+     */</span>
+    <span class="keyword">boolean</span> delete(String code);
+}</pre>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.dao;
+
+<span class="keyword">import</span> com.example.collegemanager.model.Course;
+<span class="keyword">import</span> com.example.collegemanager.model.Student;
+<span class="keyword">import</span> java.util.List;
+
+<span class="keyword">public interface</span> RegistrationDAO {
+    
+    <span class="comment">/**
+     * Register a student for a course
+     * @param studentId the student ID
+     * @param courseCode the course code
+     * @return true if successful
+     */</span>
+    <span class="keyword">boolean</span> registerStudentForCourse(<span class="keyword">int</span> studentId, String courseCode);
+    
+    <span class="comment">/**
+     * Unregister a student from a course
+     * @param studentId the student ID
+     * @param courseCode the course code
+     * @return true if successful
+     */</span>
+    <span class="keyword">boolean</span> unregisterStudentFromCourse(<span class="keyword">int</span> studentId, String courseCode);
+    
+    <span class="comment">/**
+     * Get all courses a student is registered for
+     * @param studentId the student ID
+     * @return list of courses
+     */</span>
+    List&lt;Course&gt; getCoursesForStudent(<span class="keyword">int</span> studentId);
+    
+    <span class="comment">/**
+     * Get all students registered for a course
+     * @param courseCode the course code
+     * @return list of students
+     */</span>
+    List&lt;Student&gt; getStudentsForCourse(String courseCode);
+    
+    <span class="comment">/**
+     * Count the number of students registered for a course
+     * @param courseCode the course code
+     * @return the count of students
+     */</span>
+    <span class="keyword">int</span> countStudentsForCourse(String courseCode);
+}</pre>
+
+    <div class="warning">
+      <strong>Notice:</strong> Our interface methods match the operations we need to support in our application. Each
+      DAO handles operations for a specific entity: students, courses, or registrations.
+    </div>
+
+    <h3>Step 5.2: Implementing the StudentDAO</h3>
+
+    <p>Now let's implement the StudentDAO interface with JDBC code to interact with our database:</p>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.dao.impl;
+
+<span class="keyword">import</span> com.example.collegemanager.dao.StudentDAO;
+<span class="keyword">import</span> com.example.collegemanager.db.DbUtil;
+<span class="keyword">import</span> com.example.collegemanager.model.Student;
+
+<span class="keyword">import</span> java.sql.*;
+<span class="keyword">import</span> java.util.ArrayList;
+<span class="keyword">import</span> java.util.List;
+
+<span class="keyword">public class</span> StudentDAOImpl <span class="keyword">implements</span> StudentDAO {
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public</span> Student findById(<span class="keyword">int</span> id) {
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            PreparedStatement stmt = conn.prepareStatement(<span class="string">"SELECT * FROM students WHERE id = ?"</span>);
+            stmt.setInt(1, id);
+            
+            ResultSet rs = stmt.executeQuery();
+            <span class="keyword">if</span> (rs.next()) {
+                String name = rs.getString(<span class="string">"name"</span>);
+                String email = rs.getString(<span class="string">"email"</span>);
+                <span class="keyword">return new</span> Student(id, name, email);
+            }
+            <span class="keyword">return null</span>;
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error finding student: "</span> + e.getMessage());
+            <span class="keyword">return null</span>;
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+    }
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public</span> List&lt;Student&gt; findAll() {
+        List&lt;Student&gt; students = <span class="keyword">new</span> ArrayList&lt;&gt;();
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            Statement stmt = conn.createStatement();
+            ResultSet rs = stmt.executeQuery(<span class="string">"SELECT * FROM students"</span>);
+            
+            <span class="keyword">while</span> (rs.next()) {
+                <span class="keyword">int</span> id = rs.getInt(<span class="string">"id"</span>);
+                String name = rs.getString(<span class="string">"name"</span>);
+                String email = rs.getString(<span class="string">"email"</span>);
+                students.add(<span class="keyword">new</span> Student(id, name, email));
+            }
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error finding all students: "</span> + e.getMessage());
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+        <span class="keyword">return</span> students;
+    }
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public boolean</span> save(Student student) {
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            
+            <span class="comment">// Check if student exists</span>
+            PreparedStatement checkStmt = conn.prepareStatement(<span class="string">"SELECT COUNT(*) FROM students WHERE id = ?"</span>);
+            checkStmt.setInt(1, student.getId());
+            ResultSet rs = checkStmt.executeQuery();
+            rs.next();
+            <span class="keyword">int</span> count = rs.getInt(1);
+            
+            PreparedStatement stmt;
+            <span class="keyword">if</span> (count > 0) {
+                <span class="comment">// Update existing student</span>
+                stmt = conn.prepareStatement(<span class="string">"UPDATE students SET name = ?, email = ? WHERE id = ?"</span>);
+                stmt.setString(1, student.getName());
+                stmt.setString(2, student.getEmail());
+                stmt.setInt(3, student.getId());
+            } <span class="keyword">else</span> {
+                <span class="comment">// Insert new student</span>
+                stmt = conn.prepareStatement(<span class="string">"INSERT INTO students (id, name, email) VALUES (?, ?, ?)"</span>);
+                stmt.setInt(1, student.getId());
+                stmt.setString(2, student.getName());
+                stmt.setString(3, student.getEmail());
+            }
+            
+            <span class="keyword">int</span> result = stmt.executeUpdate();
+            <span class="keyword">return</span> result > 0;
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error saving student: "</span> + e.getMessage());
+            <span class="keyword">return false</span>;
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+    }
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public boolean</span> delete(<span class="keyword">int</span> id) {
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            PreparedStatement stmt = conn.prepareStatement(<span class="string">"DELETE FROM students WHERE id = ?"</span>);
+            stmt.setInt(1, id);
+            <span class="keyword">int</span> result = stmt.executeUpdate();
+            <span class="keyword">return</span> result > 0;
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error deleting student: "</span> + e.getMessage());
+            <span class="keyword">return false</span>;
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+    }
+}</pre>
+
+    <div class="tip">
+      <strong>JDBC Pattern:</strong> Notice how we follow a consistent pattern:
+      <ol>
+        <li>Get a database connection</li>
+        <li>Prepare and execute SQL statements</li>
+        <li>Process the results</li>
+        <li>Handle exceptions</li>
+        <li>Close the connection in a finally block</li>
+      </ol>
+    </div>
+
+    <h3>Step 5.3: Implementing the CourseDAO</h3>
+
+    <p>Next, let's implement the CourseDAO interface:</p>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.dao.impl;
+
+<span class="keyword">import</span> com.example.collegemanager.dao.CourseDAO;
+<span class="keyword">import</span> com.example.collegemanager.db.DbUtil;
+<span class="keyword">import</span> com.example.collegemanager.model.Course;
+
+<span class="keyword">import</span> java.sql.*;
+<span class="keyword">import</span> java.util.ArrayList;
+<span class="keyword">import</span> java.util.List;
+
+<span class="keyword">public class</span> CourseDAOImpl <span class="keyword">implements</span> CourseDAO {
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public</span> Course findByCode(String code) {
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            PreparedStatement stmt = conn.prepareStatement(<span class="string">"SELECT * FROM courses WHERE code = ?"</span>);
+            stmt.setString(1, code);
+            
+            ResultSet rs = stmt.executeQuery();
+            <span class="keyword">if</span> (rs.next()) {
+                String title = rs.getString(<span class="string">"title"</span>);
+                <span class="keyword">int</span> credits = rs.getInt(<span class="string">"credits"</span>);
+                String instructor = rs.getString(<span class="string">"instructor"</span>);
+                <span class="keyword">return new</span> Course(code, title, credits, instructor);
+            }
+            <span class="keyword">return null</span>;
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error finding course: "</span> + e.getMessage());
+            <span class="keyword">return null</span>;
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+    }
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public</span> List&lt;Course&gt; findAll() {
+        List&lt;Course&gt; courses = <span class="keyword">new</span> ArrayList&lt;&gt;();
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            Statement stmt = conn.createStatement();
+            ResultSet rs = stmt.executeQuery(<span class="string">"SELECT * FROM courses"</span>);
+            
+            <span class="keyword">while</span> (rs.next()) {
+                String code = rs.getString(<span class="string">"code"</span>);
+                String title = rs.getString(<span class="string">"title"</span>);
+                <span class="keyword">int</span> credits = rs.getInt(<span class="string">"credits"</span>);
+                String instructor = rs.getString(<span class="string">"instructor"</span>);
+                courses.add(<span class="keyword">new</span> Course(code, title, credits, instructor));
+            }
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error finding all courses: "</span> + e.getMessage());
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+        <span class="keyword">return</span> courses;
+    }
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public boolean</span> save(Course course) {
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            
+            <span class="comment">// Check if course exists</span>
+            PreparedStatement checkStmt = conn.prepareStatement(<span class="string">"SELECT COUNT(*) FROM courses WHERE code = ?"</span>);
+            checkStmt.setString(1, course.getCode());
+            ResultSet rs = checkStmt.executeQuery();
+            rs.next();
+            <span class="keyword">int</span> count = rs.getInt(1);
+            
+            PreparedStatement stmt;
+            <span class="keyword">if</span> (count > 0) {
+                <span class="comment">// Update existing course</span>
+                stmt = conn.prepareStatement(<span class="string">"UPDATE courses SET title = ?, credits = ?, instructor = ? WHERE code = ?"</span>);
+                stmt.setString(1, course.getTitle());
+                stmt.setInt(2, course.getCredits());
+                stmt.setString(3, course.getInstructor());
+                stmt.setString(4, course.getCode());
+            } <span class="keyword">else</span> {
+                <span class="comment">// Insert new course</span>
+                stmt = conn.prepareStatement(<span class="string">"INSERT INTO courses (code, title, credits, instructor) VALUES (?, ?, ?, ?)"</span>);
+                stmt.setString(1, course.getCode());
+                stmt.setString(2, course.getTitle());
+                stmt.setInt(3, course.getCredits());
+                stmt.setString(4, course.getInstructor());
+            }
+            
+            <span class="keyword">int</span> result = stmt.executeUpdate();
+            <span class="keyword">return</span> result > 0;
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error saving course: "</span> + e.getMessage());
+            <span class="keyword">return false</span>;
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+    }
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public boolean</span> delete(String code) {
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            PreparedStatement stmt = conn.prepareStatement(<span class="string">"DELETE FROM courses WHERE code = ?"</span>);
+            stmt.setString(1, code);
+            <span class="keyword">int</span> result = stmt.executeUpdate();
+            <span class="keyword">return</span> result > 0;
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error deleting course: "</span> + e.getMessage());
+            <span class="keyword">return false</span>;
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+    }
+}</pre>
+
+    <h3>Step 5.4: Implementing the RegistrationDAO</h3>
+
+    <p>
+      Finally, let's implement the RegistrationDAO to handle the many-to-many relationship between students and courses:
+    </p>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.dao.impl;
+
+<span class="keyword">import</span> com.example.collegemanager.dao.RegistrationDAO;
+<span class="keyword">import</span> com.example.collegemanager.db.DbUtil;
+<span class="keyword">import</span> com.example.collegemanager.model.Course;
+<span class="keyword">import</span> com.example.collegemanager.model.Student;
+
+<span class="keyword">import</span> java.sql.*;
+<span class="keyword">import</span> java.util.ArrayList;
+<span class="keyword">import</span> java.util.List;
+
+<span class="keyword">public class</span> RegistrationDAOImpl <span class="keyword">implements</span> RegistrationDAO {
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public boolean</span> registerStudentForCourse(<span class="keyword">int</span> studentId, String courseCode) {
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            
+            <span class="comment">// Check if already registered</span>
+            PreparedStatement checkStmt = conn.prepareStatement(
+                <span class="string">"SELECT COUNT(*) FROM registrations WHERE student_id = ? AND course_code = ?"</span>);
+            checkStmt.setInt(1, studentId);
+            checkStmt.setString(2, courseCode);
+            ResultSet rs = checkStmt.executeQuery();
+            rs.next();
+            <span class="keyword">int</span> count = rs.getInt(1);
+            
+            <span class="comment">// Only insert if not already registered</span>
+            <span class="keyword">if</span> (count == 0) {
+                PreparedStatement stmt = conn.prepareStatement(
+                    <span class="string">"INSERT INTO registrations (student_id, course_code) VALUES (?, ?)"</span>);
+                stmt.setInt(1, studentId);
+                stmt.setString(2, courseCode);
+                <span class="keyword">int</span> result = stmt.executeUpdate();
+                <span class="keyword">return</span> result > 0;
+            }
+            
+            <span class="keyword">return true</span>; <span class="comment">// Already registered</span>
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error registering student for course: "</span> + e.getMessage());
+            <span class="keyword">return false</span>;
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+    }
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public boolean</span> unregisterStudentFromCourse(<span class="keyword">int</span> studentId, String courseCode) {
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            
+            PreparedStatement stmt = conn.prepareStatement(
+                <span class="string">"DELETE FROM registrations WHERE student_id = ? AND course_code = ?"</span>);
+            stmt.setInt(1, studentId);
+            stmt.setString(2, courseCode);
+            
+            <span class="keyword">int</span> result = stmt.executeUpdate();
+            <span class="keyword">return</span> result > 0;
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error unregistering student from course: "</span> + e.getMessage());
+            <span class="keyword">return false</span>;
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+    }
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public</span> List&lt;Course&gt; getCoursesForStudent(<span class="keyword">int</span> studentId) {
+        List&lt;Course&gt; courses = <span class="keyword">new</span> ArrayList&lt;&gt;();
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            
+            <span class="comment">// Join registrations with courses to get course details</span>
+            PreparedStatement stmt = conn.prepareStatement(
+                <span class="string">"SELECT c.* FROM courses c "</span> +
+                <span class="string">"JOIN registrations r ON c.code = r.course_code "</span> +
+                <span class="string">"WHERE r.student_id = ?"</span>);
+            stmt.setInt(1, studentId);
+            
+            ResultSet rs = stmt.executeQuery();
+            <span class="keyword">while</span> (rs.next()) {
+                String code = rs.getString(<span class="string">"code"</span>);
+                String title = rs.getString(<span class="string">"title"</span>);
+                <span class="keyword">int</span> credits = rs.getInt(<span class="string">"credits"</span>);
+                String instructor = rs.getString(<span class="string">"instructor"</span>);
+                
+                courses.add(<span class="keyword">new</span> Course(code, title, credits, instructor));
+            }
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error getting courses for student: "</span> + e.getMessage());
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+        <span class="keyword">return</span> courses;
+    }
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public</span> List&lt;Student&gt; getStudentsForCourse(String courseCode) {
+        List&lt;Student&gt; students = <span class="keyword">new</span> ArrayList&lt;&gt;();
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            
+            <span class="comment">// Join registrations with students to get student details</span>
+            PreparedStatement stmt = conn.prepareStatement(
+                <span class="string">"SELECT s.* FROM students s "</span> +
+                <span class="string">"JOIN registrations r ON s.id = r.student_id "</span> +
+                <span class="string">"WHERE r.course_code = ?"</span>);
+            stmt.setString(1, courseCode);
+            
+            ResultSet rs = stmt.executeQuery();
+            <span class="keyword">while</span> (rs.next()) {
+                <span class="keyword">int</span> id = rs.getInt(<span class="string">"id"</span>);
+                String name = rs.getString(<span class="string">"name"</span>);
+                String email = rs.getString(<span class="string">"email"</span>);
+                
+                students.add(<span class="keyword">new</span> Student(id, name, email));
+            }
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error getting students for course: "</span> + e.getMessage());
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+        <span class="keyword">return</span> students;
+    }
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public int</span> countStudentsForCourse(String courseCode) {
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            
+            PreparedStatement stmt = conn.prepareStatement(
+                <span class="string">"SELECT COUNT(*) FROM registrations WHERE course_code = ?"</span>);
+            stmt.setString(1, courseCode);
+            
+            ResultSet rs = stmt.executeQuery();
+            <span class="keyword">if</span> (rs.next()) {
+                <span class="keyword">return</span> rs.getInt(1);
+            }
+            <span class="keyword">return</span> 0;
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error counting students for course: "</span> + e.getMessage());
+            <span class="keyword">return</span> 0;
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+    }
+}</pre>
+
+    <div class="warning">
+      <strong>Notice:</strong> The RegistrationDAO implementation handles the complexity of the many-to-many
+      relationship between students and courses. It uses SQL joins to fetch related data when needed.
+    </div>
+
+    <p>Now that we have created all our DAOs, we can move on to testing them in the next step!</p>
+
+    <h2>Step 6: Testing Our DAOs 🧪</h2>
+
+    <p>Let's create a test class to ensure our DAOs are working correctly:</p>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.db;
+
+<span class="keyword">import</span> com.example.collegemanager.dao.CourseDAO;
+<span class="keyword">import</span> com.example.collegemanager.dao.RegistrationDAO;
+<span class="keyword">import</span> com.example.collegemanager.dao.StudentDAO;
+<span class="keyword">import</span> com.example.collegemanager.dao.impl.CourseDAOImpl;
+<span class="keyword">import</span> com.example.collegemanager.dao.impl.RegistrationDAOImpl;
+<span class="keyword">import</span> com.example.collegemanager.dao.impl.StudentDAOImpl;
+<span class="keyword">import</span> com.example.collegemanager.model.Course;
+<span class="keyword">import</span> com.example.collegemanager.model.Student;
+
+<span class="keyword">import</span> java.util.List;
+
+<span class="keyword">public class</span> DAOTestMain {
+
+    <span class="keyword">public static void</span> main(String[] args) {
+        <span class="comment">// Initialize the database schema</span>
+        SchemaInitializer.initializeSchema();
+        
+        <span class="comment">// Create our DAOs</span>
+        StudentDAO studentDAO = <span class="keyword">new</span> StudentDAOImpl();
+        CourseDAO courseDAO = <span class="keyword">new</span> CourseDAOImpl();
+        RegistrationDAO registrationDAO = <span class="keyword">new</span> RegistrationDAOImpl();
+        
+        <span class="comment">// Test student DAO</span>
+        testStudentDAO(studentDAO);
+        
+        <span class="comment">// Test course DAO</span>
+        testCourseDAO(courseDAO);
+        
+        <span class="comment">// Test registration</span>
+        testRegistration(studentDAO, courseDAO, registrationDAO);
+    }
+    
+    <span class="keyword">private static void</span> testStudentDAO(StudentDAO studentDAO) {
+        System.out.println(<span class="string">"===== Testing StudentDAO ====="</span>);
+        
+        <span class="comment">// Create a test student</span>
+        Student alice = <span class="keyword">new</span> Student(1001, <span class="string">"Alice Smith"</span>, <span class="string">"alice@example.com"</span>);
+        
+        <span class="comment">// Save the student</span>
+        <span class="keyword">boolean</span> saved = studentDAO.save(alice);
+        System.out.println(<span class="string">"Student saved: "</span> + saved);
+        
+        <span class="comment">// Find the student by ID</span>
+        Student foundStudent = studentDAO.findById(1001);
+        <span class="keyword">if</span> (foundStudent != <span class="keyword">null</span>) {
+            System.out.println(<span class="string">"Found student: "</span> + foundStudent.getName());
+        } <span class="keyword">else</span> {
+            System.out.println(<span class="string">"Student not found!"</span>);
+        }
+        
+        <span class="comment">// List all students</span>
+        List&lt;Student&gt; allStudents = studentDAO.findAll();
+        System.out.println(<span class="string">"All students: "</span> + allStudents.size());
+        <span class="keyword">for</span> (Student s : allStudents) {
+            System.out.println(<span class="string">"  - "</span> + s.getId() + <span class="string">": "</span> + s.getName());
+        }
+    }
+    
+    <span class="keyword">private static void</span> testCourseDAO(CourseDAO courseDAO) {
+        System.out.println(<span class="string">"\n===== Testing CourseDAO ====="</span>);
+        
+        <span class="comment">// Create test courses</span>
+        Course java = <span class="keyword">new</span> Course(<span class="string">"CS101"</span>, <span class="string">"Introduction to Java"</span>, 3, <span class="string">"Dr. Java"</span>);
+        Course web = <span class="keyword">new</span> Course(<span class="string">"CS201"</span>, <span class="string">"Web Development"</span>, 4, <span class="string">"Prof. Web"</span>);
+        
+        <span class="comment">// Save courses</span>
+        <span class="keyword">boolean</span> javaSaved = courseDAO.save(java);
+        <span class="keyword">boolean</span> webSaved = courseDAO.save(web);
+        System.out.println(<span class="string">"Java course saved: "</span> + javaSaved);
+        System.out.println(<span class="string">"Web course saved: "</span> + webSaved);
+        
+        <span class="comment">// Find course by code</span>
+        Course foundCourse = courseDAO.findByCode(<span class="string">"CS101"</span>);
+        <span class="keyword">if</span> (foundCourse != <span class="keyword">null</span>) {
+            System.out.println(<span class="string">"Found course: "</span> + foundCourse.getTitle());
+        } <span class="keyword">else</span> {
+            System.out.println(<span class="string">"Course not found!"</span>);
+        }
+        
+        <span class="comment">// List all courses</span>
+        List&lt;Course&gt; allCourses = courseDAO.findAll();
+        System.out.println(<span class="string">"All courses: "</span> + allCourses.size());
+        <span class="keyword">for</span> (Course c : allCourses) {
+            System.out.println(<span class="string">"  - "</span> + c.getCode() + <span class="string">": "</span> + c.getTitle());
+        }
+    }
+    
+    <span class="keyword">private static void</span> testRegistration(StudentDAO studentDAO, CourseDAO courseDAO, RegistrationDAO registrationDAO) {
+        System.out.println(<span class="string">"\n===== Testing Registration ====="</span>);
+        
+        <span class="comment">// Register a student for courses</span>
+        <span class="keyword">boolean</span> registered1 = registrationDAO.registerStudentForCourse(1001, <span class="string">"CS101"</span>);
+        <span class="keyword">boolean</span> registered2 = registrationDAO.registerStudentForCourse(1001, <span class="string">"CS201"</span>);
+        System.out.println(<span class="string">"Registered for Java: "</span> + registered1);
+        System.out.println(<span class="string">"Registered for Web: "</span> + registered2);
+        
+        <span class="comment">// Get courses for student</span>
+        List&lt;Course&gt; courses = registrationDAO.getCoursesForStudent(1001);
+        System.out.println(<span class="string">"Courses for student ID 1001: "</span> + courses.size());
+        <span class="keyword">for</span> (Course c : courses) {
+            System.out.println(<span class="string">"  - "</span> + c.getCode() + <span class="string">": "</span> + c.getTitle());
+        }
+        
+        <span class="comment">// Count students for course</span>
+        <span class="keyword">int</span> javaCount = registrationDAO.countStudentsForCourse(<span class="string">"CS101"</span>);
+        <span class="keyword">int</span> webCount = registrationDAO.countStudentsForCourse(<span class="string">"CS201"</span>);
+        System.out.println(<span class="string">"Students in Java course: "</span> + javaCount);
+        System.out.println(<span class="string">"Students in Web course: "</span> + webCount);
+        
+        <span class="comment">// Unregister student from a course</span>
+        <span class="keyword">boolean</span> unregistered = registrationDAO.unregisterStudentFromCourse(1001, <span class="string">"CS201"</span>);
+        System.out.println(<span class="string">"Unregistered from Web: "</span> + unregistered);
+        
+        <span class="comment">// Verify courses after unregistering</span>
+        courses = registrationDAO.getCoursesForStudent(1001);
+        System.out.println(<span class="string">"Courses after unregistering: "</span> + courses.size());
+        <span class="keyword">for</span> (Course c : courses) {
+            System.out.println(<span class="string">"  - "</span> + c.getCode() + <span class="string">": "</span> + c.getTitle());
+        }
+    }
+}</pre>
+
+    <div class="tip">
+      <strong>Run this test!</strong> If everything is working correctly, you should see:
+      <ul>
+        <li>A new student saved to the database</li>
+        <li>Two new courses saved to the database</li>
+        <li>The student registered for both courses</li>
+        <li>The student unregistered from one course</li>
+      </ul>
+      All of this data will persist even after restarting your application!
+    </div>
+
+    <h2>Step 7: Creating a DAO Factory 🏭</h2>
+
+    <p>
+      To make it easier to work with our DAOs, let's create a factory class that provides access to all our DAO
+      implementations:
+    </p>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.dao;
+
+<span class="keyword">import</span> com.example.collegemanager.dao.impl.CourseDAOImpl;
+<span class="keyword">import</span> com.example.collegemanager.dao.impl.RegistrationDAOImpl;
+<span class="keyword">import</span> com.example.collegemanager.dao.impl.StudentDAOImpl;
+
+<span class="keyword">public class</span> DAOFactory {
+    <span class="keyword">private static</span> StudentDAO studentDAO;
+    <span class="keyword">private static</span> CourseDAO courseDAO;
+    <span class="keyword">private static</span> RegistrationDAO registrationDAO;
+    
+    <span class="comment">/**
+     * Get the StudentDAO instance
+     * @return the StudentDAO
+     */</span>
+    <span class="keyword">public static</span> StudentDAO getStudentDAO() {
+        <span class="keyword">if</span> (studentDAO == <span class="keyword">null</span>) {
+            studentDAO = <span class="keyword">new</span> StudentDAOImpl();
+        }
+        <span class="keyword">return</span> studentDAO;
+    }
+    
+    <span class="comment">/**
+     * Get the CourseDAO instance
+     * @return the CourseDAO
+     */</span>
+    <span class="keyword">public static</span> CourseDAO getCourseDAO() {
+        <span class="keyword">if</span> (courseDAO == <span class="keyword">null</span>) {
+            courseDAO = <span class="keyword">new</span> CourseDAOImpl();
+        }
+        <span class="keyword">return</span> courseDAO;
+    }
+    
+    <span class="comment">/**
+     * Get the RegistrationDAO instance
+     * @return the RegistrationDAO
+     */</span>
+    <span class="keyword">public static</span> RegistrationDAO getRegistrationDAO() {
+        <span class="keyword">if</span> (registrationDAO == <span class="keyword">null</span>) {
+            registrationDAO = <span class="keyword">new</span> RegistrationDAOImpl();
+        }
+        <span class="keyword">return</span> registrationDAO;
+    }
+}</pre>
+
+    <div class="tip">
+      <strong>Why a Factory?</strong> The factory pattern:
+      <ul>
+        <li>Creates a single point of access for all DAOs</li>
+        <li>Keeps track of DAO instances so we don't create new ones unnecessarily</li>
+        <li>Makes it easy to swap implementations if needed</li>
+      </ul>
+    </div>
+
+    <h2>What We've Learned So Far 🎓</h2>
+
+    <ul>
+      <li>How to create Data Access Objects (DAOs) for database operations</li>
+      <li>Using the DAO pattern to separate database code from business logic</li>
+      <li>Creating interfaces for our DAOs to define clear contracts</li>
+      <li>How to implement JDBC operations for all CRUD (Create, Read, Update, Delete) operations</li>
+      <li>Testing our DAOs to ensure they work correctly</li>
+      <li>Using a factory pattern to manage DAO instances</li>
+    </ul>
+
+    <div class="warning">
+      <strong>Coming up in the next part:</strong> We'll update our College Manager web application to use our DAOs for
+      persistent storage!
+    </div>
+
+    <h2>Step 8: Integrating with Our College Manager Web App 🌐</h2>
+
+    <p>
+      Now that we have our database layer working, let's connect it to our College Manager web application. We need to
+      modify our ManagerServlet to use our DAOs instead of in-memory storage.
+    </p>
+
+    <h3>First, let's create a Context Listener to initialize our database:</h3>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.listener;
+
+<span class="keyword">import</span> com.example.collegemanager.db.SchemaInitializer;
+<span class="keyword">import</span> jakarta.servlet.ServletContextEvent;
+<span class="keyword">import</span> jakarta.servlet.ServletContextListener;
+<span class="keyword">import</span> jakarta.servlet.annotation.WebListener;
+
+<span class="annotation">@WebListener</span>
+<span class="keyword">public class</span> DatabaseInitListener <span class="keyword">implements</span> ServletContextListener {
+    
+    <span class="annotation">@Override</span>
+    <span class="keyword">public void</span> contextInitialized(ServletContextEvent sce) {
+        System.out.println(<span class="string">"Initializing database for College Manager..."</span>);
+        SchemaInitializer.initializeSchema();
+        System.out.println(<span class="string">"Database initialization complete!"</span>);
+    }
+    
+    <span class="annotation">@Override</span>
+    <span class="keyword">public void</span> contextDestroyed(ServletContextEvent sce) {
+        <span class="comment">// Clean up database resources if needed</span>
+        System.out.println(<span class="string">"College Manager shutting down..."</span>);
+    }
+}</pre>
+
+    <div class="tip">
+      <strong>What is a Context Listener?</strong> It's a component that listens for web application lifecycle events.
+      The <code>contextInitialized</code> method runs when the application starts up - perfect for initializing our
+      database schema!
+    </div>
+
+    <h3>Next, let's update our ManagerServlet to use DAOs:</h3>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.controller;
+
+<span class="keyword">import</span> com.example.collegemanager.dao.CourseDAO;
+<span class="keyword">import</span> com.example.collegemanager.dao.DAOFactory;
+<span class="keyword">import</span> com.example.collegemanager.dao.RegistrationDAO;
+<span class="keyword">import</span> com.example.collegemanager.dao.StudentDAO;
+<span class="keyword">import</span> com.example.collegemanager.model.CollegeManager;
+<span class="keyword">import</span> com.example.collegemanager.model.Course;
+<span class="keyword">import</span> com.example.collegemanager.model.Student;
+
+<span class="keyword">import</span> jakarta.servlet.ServletException;
+<span class="keyword">import</span> jakarta.servlet.annotation.WebServlet;
+<span class="keyword">import</span> jakarta.servlet.http.HttpServlet;
+<span class="keyword">import</span> jakarta.servlet.http.HttpServletRequest;
+<span class="keyword">import</span> jakarta.servlet.http.HttpServletResponse;
+<span class="keyword">import</span> jakarta.servlet.http.HttpSession;
+
+<span class="keyword">import</span> java.io.IOException;
+<span class="keyword">import</span> java.util.List;
+<span class="keyword">import</span> java.util.HashMap;
+<span class="keyword">import</span> java.util.Map;
+
+<span class="annotation">@WebServlet("/manager")</span>
+<span class="keyword">public class</span> ManagerServlet <span class="keyword">extends</span> HttpServlet {
+
+    <span class="comment">// Get our DAOs from the factory</span>
+    <span class="keyword">private</span> StudentDAO studentDAO = DAOFactory.getStudentDAO();
+    <span class="keyword">private</span> CourseDAO courseDAO = DAOFactory.getCourseDAO();
+    <span class="keyword">private</span> RegistrationDAO registrationDAO = DAOFactory.getRegistrationDAO();
+    
+    <span class="annotation">@Override</span>
+    <span class="keyword">public void</span> init() <span class="keyword">throws</span> ServletException {
+        <span class="comment">// Check if we need to add sample data (if database is empty)</span>
+        <span class="keyword">if</span> (studentDAO.findAll().isEmpty() && courseDAO.findAll().isEmpty()) {
+            addSampleData();
+        }
+    }
+    
+    <span class="keyword">private void</span> addSampleData() {
+        System.out.println(<span class="string">"Adding sample data to the database..."</span>);
+        
+        <span class="comment">// Add sample students</span>
+        Student alice = <span class="keyword">new</span> Student(1001, <span class="string">"Alice Smith"</span>, <span class="string">"alice@example.com"</span>);
+        Student bob = <span class="keyword">new</span> Student(1002, <span class="string">"Bob Johnson"</span>, <span class="string">"bob@example.com"</span>);
+        studentDAO.save(alice);
+        studentDAO.save(bob);
+        
+        <span class="comment">// Add sample courses</span>
+        Course javaCourse = <span class="keyword">new</span> Course(<span class="string">"CS101"</span>, <span class="string">"Introduction to Java"</span>, 3, <span class="string">"Dr. Java"</span>);
+        Course webDev = <span class="keyword">new</span> Course(<span class="string">"CS201"</span>, <span class="string">"Web Development"</span>, 4, <span class="string">"Prof. Web"</span>);
+        Course math = <span class="keyword">new</span> Course(<span class="string">"MATH101"</span>, <span class="string">"Calculus I"</span>, 4, <span class="string">"Dr. Calculus"</span>);
+        courseDAO.save(javaCourse);
+        courseDAO.save(webDev);
+        courseDAO.save(math);
+        
+        <span class="comment">// Register some students for courses</span>
+        registrationDAO.registerStudentForCourse(alice.getId(), javaCourse.getCode());
+        registrationDAO.registerStudentForCourse(alice.getId(), webDev.getCode());
+        registrationDAO.registerStudentForCourse(bob.getId(), javaCourse.getCode());
+        registrationDAO.registerStudentForCourse(bob.getId(), math.getCode());
+        
+        System.out.println(<span class="string">"Sample data added successfully!"</span>);
+    }
+    
+    <span class="annotation">@Override</span>
+    <span class="keyword">protected void</span> doGet(HttpServletRequest request, HttpServletResponse response) 
+            <span class="keyword">throws</span> ServletException, IOException {
+        
+        <span class="comment">// Check if we're viewing course details</span>
+        String courseCode = request.getParameter(<span class="string">"courseCode"</span>);
+        <span class="keyword">if</span> (courseCode != <span class="keyword">null</span> && !courseCode.isEmpty()) {
+            showCourseDetails(request, response, courseCode);
+            <span class="keyword">return</span>;
+        }
+        
+        <span class="comment">// Load all students and courses from the database</span>
+        List&lt;Student&gt; students = studentDAO.findAll();
+        List&lt;Course&gt; courses = courseDAO.findAll();
+        
+        <span class="comment">// For each student, load their registered courses</span>
+        <span class="keyword">for</span> (Student student : students) {
+            List&lt;Course&gt; registeredCourses = registrationDAO.getCoursesForStudent(student.getId());
+            <span class="keyword">for</span> (Course course : registeredCourses) {
+                student.registerForCourse(course);
+            }
+        }
+        
+        <span class="comment">// Calculate enrollment statistics</span>
+        Map&lt;String, Integer&gt; enrollmentStats = <span class="keyword">new</span> HashMap&lt;&gt;();
+        <span class="keyword">for</span> (Course course : courses) {
+            <span class="keyword">int</span> count = registrationDAO.countStudentsForCourse(course.getCode());
+            enrollmentStats.put(course.getCode(), count);
+        }
+        
+        <span class="comment">// Add data to the request</span>
+        request.setAttribute(<span class="string">"students"</span>, students);
+        request.setAttribute(<span class="string">"courses"</span>, courses);
+        request.setAttribute(<span class="string">"enrollmentStats"</span>, enrollmentStats);
+        
+        <span class="comment">// Forward to the JSP</span>
+        request.getRequestDispatcher(<span class="string">"/WEB-INF/views/manager.jsp"</span>).forward(request, response);
+    }
+    
+    <span class="keyword">private void</span> showCourseDetails(HttpServletRequest request, HttpServletResponse response, String courseCode) 
+            <span class="keyword">throws</span> ServletException, IOException {
+        
+        <span class="comment">// Get the course from the database</span>
+        Course course = courseDAO.findByCode(courseCode);
+        <span class="keyword">if</span> (course == <span class="keyword">null</span>) {
+            <span class="comment">// Course not found - redirect to the main page</span>
+            response.sendRedirect(request.getContextPath() + <span class="string">"/manager"</span>);
+            <span class="keyword">return</span>;
+        }
+        
+        <span class="comment">// Get students enrolled in this course (we'll need to get all students and filter)</span>
+        List&lt;Student&gt; allStudents = studentDAO.findAll();
+        List&lt;Student&gt; enrolledStudents = <span class="keyword">new</span> java.util.ArrayList&lt;&gt;();
+        
+        <span class="keyword">for</span> (Student student : allStudents) {
+            <span class="comment">// Get the courses for this student</span>
+            List&lt;Course&gt; courses = registrationDAO.getCoursesForStudent(student.getId());
+            <span class="keyword">for</span> (Course c : courses) {
+                <span class="keyword">if</span> (c.getCode().equals(courseCode)) {
+                    enrolledStudents.add(student);
+                    <span class="keyword">break</span>;
+                }
+            }
+        }
+        
+        <span class="comment">// Add data to the request</span>
+        request.setAttribute(<span class="string">"course"</span>, course);
+        request.setAttribute(<span class="string">"enrolledStudents"</span>, enrolledStudents);
+        
+        <span class="comment">// Forward to the course details JSP</span>
+        request.getRequestDispatcher(<span class="string">"/WEB-INF/views/courseDetails.jsp"</span>).forward(request, response);
+    }
+    
+    <span class="annotation">@Override</span>
+    <span class="keyword">protected void</span> doPost(HttpServletRequest request, HttpServletResponse response) 
+            <span class="keyword">throws</span> ServletException, IOException {
+        
+        <span class="comment">// Get the action parameter</span>
+        String action = request.getParameter(<span class="string">"action"</span>);
+        
+        <span class="keyword">if</span> (<span class="string">"addStudent"</span>.equals(action)) {
+            addStudent(request);
+        } <span class="keyword">else if</span> (<span class="string">"addCourse"</span>.equals(action)) {
+            addCourse(request);
+        } <span class="keyword">else if</span> (<span class="string">"registerStudentForCourse"</span>.equals(action)) {
+            registerStudentForCourse(request);
+        } <span class="keyword">else if</span> (<span class="string">"dropCourse"</span>.equals(action)) {
+            dropCourse(request);
+        }
+        
+        <span class="comment">// Redirect back to the manager page</span>
+        response.sendRedirect(request.getContextPath() + <span class="string">"/manager"</span>);
+    }
+    
+    <span class="keyword">private void</span> addStudent(HttpServletRequest request) {
+        <span class="comment">// Get parameters</span>
+        String name = request.getParameter(<span class="string">"studentName"</span>);
+        String email = request.getParameter(<span class="string">"studentEmail"</span>);
+        HttpSession session = request.getSession();
+        
+        <span class="keyword">if</span> (name == <span class="keyword">null</span> || name.trim().isEmpty() || 
+            email == <span class="keyword">null</span> || email.trim().isEmpty()) {
+            session.setAttribute(<span class="string">"error"</span>, <span class="string">"Name and email are required!"</span>);
+            <span class="keyword">return</span>;
+        }
+        
+        <span class="comment">// Generate a unique ID (get max ID + 1)</span>
+        <span class="keyword">int</span> nextId = 1000;
+        List&lt;Student&gt; students = studentDAO.findAll();
+        <span class="keyword">for</span> (Student s : students) {
+            <span class="keyword">if</span> (s.getId() >= nextId) {
+                nextId = s.getId() + 1;
+            }
+        }
+        
+        <span class="comment">// Create and save the student</span>
+        Student student = <span class="keyword">new</span> Student(nextId, name, email);
+        <span class="keyword">boolean</span> success = studentDAO.save(student);
+        
+        <span class="keyword">if</span> (success) {
+            session.setAttribute(<span class="string">"message"</span>, <span class="string">"Student "</span> + name + <span class="string">" added successfully!"</span>);
+        } <span class="keyword">else</span> {
+            session.setAttribute(<span class="string">"error"</span>, <span class="string">"Failed to add student. Please try again."</span>);
+        }
+    }
+    
+    <span class="keyword">private void</span> addCourse(HttpServletRequest request) {
+        <span class="comment">// Get parameters</span>
+        String code = request.getParameter(<span class="string">"courseCode"</span>);
+        String title = request.getParameter(<span class="string">"courseTitle"</span>);
+        String creditsStr = request.getParameter(<span class="string">"courseCredits"</span>);
+        String instructor = request.getParameter(<span class="string">"courseInstructor"</span>);
+        HttpSession session = request.getSession();
+        
+        <span class="keyword">if</span> (code == <span class="keyword">null</span> || code.trim().isEmpty() || 
+            title == <span class="keyword">null</span> || title.trim().isEmpty() || 
+            creditsStr == <span class="keyword">null</span> || creditsStr.trim().isEmpty() || 
+            instructor == <span class="keyword">null</span> || instructor.trim().isEmpty()) {
+            session.setAttribute(<span class="string">"error"</span>, <span class="string">"All course fields are required!"</span>);
+            <span class="keyword">return</span>;
+        }
+        
+        <span class="keyword">try</span> {
+            <span class="keyword">int</span> credits = Integer.parseInt(creditsStr);
+            
+            <span class="comment">// Check if course code already exists</span>
+            <span class="keyword">if</span> (courseDAO.findByCode(code) != <span class="keyword">null</span>) {
+                session.setAttribute(<span class="string">"error"</span>, <span class="string">"Course code "</span> + code + <span class="string">" already exists!"</span>);
+                <span class="keyword">return</span>;
+            }
+            
+            <span class="comment">// Create and save the course</span>
+            Course course = <span class="keyword">new</span> Course(code, title, credits, instructor);
+            <span class="keyword">boolean</span> success = courseDAO.save(course);
+            
+            <span class="keyword">if</span> (success) {
+                session.setAttribute(<span class="string">"message"</span>, <span class="string">"Course "</span> + code + <span class="string">" added successfully!"</span>);
+            } <span class="keyword">else</span> {
+                session.setAttribute(<span class="string">"error"</span>, <span class="string">"Failed to add course. Please try again."</span>);
+            }
+        } <span class="keyword">catch</span> (NumberFormatException e) {
+            session.setAttribute(<span class="string">"error"</span>, <span class="string">"Credits must be a number!"</span>);
+        }
+    }
+    
+    <span class="keyword">private void</span> registerStudentForCourse(HttpServletRequest request) {
+        <span class="comment">// Get parameters</span>
+        String studentIdStr = request.getParameter(<span class="string">"studentId"</span>);
+        String courseCode = request.getParameter(<span class="string">"courseCode"</span>);
+        HttpSession session = request.getSession();
+        
+        <span class="keyword">if</span> (studentIdStr == <span class="keyword">null</span> || studentIdStr.trim().isEmpty() || 
+            courseCode == <span class="keyword">null</span> || courseCode.trim().isEmpty()) {
+            session.setAttribute(<span class="string">"error"</span>, <span class="string">"Student and course are required!"</span>);
+            <span class="keyword">return</span>;
+        }
+        
+        <span class="keyword">try</span> {
+            <span class="keyword">int</span> studentId = Integer.parseInt(studentIdStr);
+            
+            <span class="comment">// Get the student and course</span>
+            Student student = studentDAO.findById(studentId);
+            Course course = courseDAO.findByCode(courseCode);
+            
+            <span class="keyword">if</span> (student == <span class="keyword">null</span> || course == <span class="keyword">null</span>) {
+                session.setAttribute(<span class="string">"error"</span>, <span class="string">"Student or course not found!"</span>);
+                <span class="keyword">return</span>;
+            }
+            
+            <span class="comment">// Check if already registered</span>
+            List&lt;Course&gt; registeredCourses = registrationDAO.getCoursesForStudent(studentId);
+            <span class="keyword">for</span> (Course c : registeredCourses) {
+                <span class="keyword">if</span> (c.getCode().equals(courseCode)) {
+                    session.setAttribute(<span class="string">"error"</span>, <span class="string">"Student is already registered for this course!"</span>);
+                    <span class="keyword">return</span>;
+                }
+            }
+            
+            <span class="comment">// Register the student</span>
+            <span class="keyword">boolean</span> success = registrationDAO.registerStudentForCourse(studentId, courseCode);
+            
+            <span class="keyword">if</span> (success) {
+                session.setAttribute(<span class="string">"message"</span>, <span class="string">"Student registered for course successfully!"</span>);
+            } <span class="keyword">else</span> {
+                session.setAttribute(<span class="string">"error"</span>, <span class="string">"Failed to register student. Please try again."</span>);
+            }
+        } <span class="keyword">catch</span> (NumberFormatException e) {
+            session.setAttribute(<span class="string">"error"</span>, <span class="string">"Invalid student ID!"</span>);
+        }
+    }
+    
+    <span class="keyword">private void</span> dropCourse(HttpServletRequest request) {
+        <span class="comment">// Get parameters</span>
+        String studentIdStr = request.getParameter(<span class="string">"studentId"</span>);
+        String courseCode = request.getParameter(<span class="string">"courseCode"</span>);
+        HttpSession session = request.getSession();
+        
+        <span class="keyword">if</span> (studentIdStr == <span class="keyword">null</span> || studentIdStr.trim().isEmpty() || 
+            courseCode == <span class="keyword">null</span> || courseCode.trim().isEmpty()) {
+            session.setAttribute(<span class="string">"error"</span>, <span class="string">"Student and course are required!"</span>);
+            <span class="keyword">return</span>;
+        }
+        
+        <span class="keyword">try</span> {
+            <span class="keyword">int</span> studentId = Integer.parseInt(studentIdStr);
+            
+            <span class="comment">// Get the student and course</span>
+            Student student = studentDAO.findById(studentId);
+            Course course = courseDAO.findByCode(courseCode);
+            
+            <span class="keyword">if</span> (student == <span class="keyword">null</span> || course == <span class="keyword">null</span>) {
+                session.setAttribute(<span class="string">"error"</span>, <span class="string">"Student or course not found!"</span>);
+                <span class="keyword">return</span>;
+            }
+            
+            <span class="comment">// Unregister the student</span>
+            <span class="keyword">boolean</span> success = registrationDAO.unregisterStudentFromCourse(studentId, courseCode);
+            
+            <span class="keyword">if</span> (success) {
+                session.setAttribute(<span class="string">"message"</span>, <span class="string">"Student dropped from course successfully!"</span>);
+            } <span class="keyword">else</span> {
+                session.setAttribute(<span class="string">"error"</span>, <span class="string">"Failed to drop course. Please try again."</span>);
+            }
+        } <span class="keyword">catch</span> (NumberFormatException e) {
+            session.setAttribute(<span class="string">"error"</span>, <span class="string">"Invalid student ID!"</span>);
+        }
+    }
+}</pre>
+
+    <div class="warning">
+      <strong>Important changes:</strong>
+      <ul>
+        <li>We've replaced the CollegeManager with direct DAO calls</li>
+        <li>We load all data from the database in doGet</li>
+        <li>We populate student course registrations from the database</li>
+        <li>All actions (add student, add course, etc.) now update the database</li>
+        <li>We set up sample data if the database is empty</li>
+      </ul>
+    </div>
+
+    <h3>Updating our JSPs</h3>
+
+    <p>
+      Our JSP files don't need many changes since we're setting the same attributes in the request. However, we need to
+      update any references to <code>collegeManager</code>:
+    </p>
+
+    <p>In manager.jsp, replace:</p>
+
+    <pre>
+&lt;p&gt;Total Students: ${collegeManager.allStudents.size()}&lt;/p&gt;
+&lt;p&gt;Total Courses: ${collegeManager.allCourses.size()}&lt;/p&gt;</pre
+    >
+
+    <p>With:</p>
+
+    <pre>
+&lt;p&gt;Total Students: ${students.size()}&lt;/p&gt;
+&lt;p&gt;Total Courses: ${courses.size()}&lt;/p&gt;</pre
+    >
+
+    <p>And replace:</p>
+
+    <pre>&lt;c:forEach var="student" items="${collegeManager.allStudents}"&gt;</pre>
+
+    <p>With:</p>
+
+    <pre>&lt;c:forEach var="student" items="${students}"&gt;</pre>
+
+    <p>And replace:</p>
+
+    <pre>&lt;c:forEach var="course" items="${collegeManager.allCourses}"&gt;</pre>
+
+    <p>With:</p>
+
+    <pre>&lt;c:forEach var="course" items="${courses}"&gt;</pre>
+
+    <div class="tip">
+      <strong>Minimal view changes:</strong> Because we're keeping the same attribute structure and just changing how we
+      retrieve the data, our JSP pages need minimal updates!
+    </div>
+
+    <h2>Step 9: Testing Our Persistent Web App 🧪</h2>
+
+    <p>Now let's test our web application with database persistence:</p>
+
+    <ol>
+      <li><strong>Deploy the application</strong> to your Jakarta EE server</li>
+      <li><strong>Visit the application</strong> at <code>http://localhost:8080/your-context-path/manager</code></li>
+      <li><strong>Add some students and courses</strong> using the web forms</li>
+      <li><strong>Register students for courses</strong></li>
+      <li><strong>Restart your server</strong> and visit the application again</li>
+      <li><strong>Verify that your data is still there!</strong> 🎉</li>
+    </ol>
+
+    <div class="warning">
+      <strong>Handling database errors:</strong> In a production application, you'd want to add more robust error
+      handling and possibly a connection pool for better performance. But this implementation gives you a solid
+      foundation for database persistence!
+    </div>
+
+    <h2>Bonus: Adding Database Console Access 🔍</h2>
+
+    <p>
+      H2 comes with a web console that lets you browse and query your database directly. Let's add it to our
+      application:
+    </p>
+
+    <p>Add this to your web.xml:</p>
+
+    <pre>
+&lt;servlet&gt;
+    &lt;servlet-name&gt;H2Console&lt;/servlet-name&gt;
+    &lt;servlet-class&gt;org.h2.server.web.JakartaWebServlet&lt;/servlet-class&gt;
+    &lt;init-param&gt;
+        &lt;param-name&gt;-webAllowOthers&lt;/param-name&gt;
+        &lt;param-value&gt;true&lt;/param-value&gt;
+    &lt;/init-param&gt;
+    &lt;load-on-startup&gt;1&lt;/load-on-startup&gt;
+&lt;/servlet&gt;
+
+&lt;servlet-mapping&gt;
+    &lt;servlet-name&gt;H2Console&lt;/servlet-name&gt;
+    &lt;url-pattern&gt;/h2/*&lt;/url-pattern&gt;
+&lt;/servlet-mapping&gt;</pre
+    >
+
+    <p>Now you can access the H2 console at <code>http://localhost:8080/your-context-path/h2</code>.</p>
+
+    <p>When you connect, use these settings:</p>
+    <ul>
+      <li><strong>JDBC URL:</strong> jdbc:h2:~/collegemanager</li>
+      <li><strong>Username:</strong> sa</li>
+      <li><strong>Password:</strong> (leave empty)</li>
+    </ul>
+
+    <p>This will let you browse your database tables and run SQL queries directly!</p>
+
+    <h2>Future Enhancements 🚀</h2>
+
+    <p>Now that you have a solid database foundation, here are some ideas for future enhancements:</p>
+
+    <ul>
+      <li><strong>Connection Pooling:</strong> Use a connection pool like HikariCP for better performance</li>
+      <li><strong>Transactions:</strong> Wrap related operations in database transactions</li>
+      <li><strong>Adding more entities:</strong> Add support for departments, semesters, grades, etc.</li>
+      <li><strong>Student authentication:</strong> Allow students to log in and view/register for their own courses</li>
+      <li><strong>Admin dashboard:</strong> Create an administrative dashboard with statistics and reports</li>
+      <li><strong>REST API:</strong> Expose your college manager functionality as a REST API</li>
+    </ul>
+
+    <h2>Conclusion: What We've Accomplished 🎓</h2>
+
+    <p>
+      Congratulations! You've successfully added database persistence to your College Manager application. Here's what
+      we've accomplished:
+    </p>
+
+    <ul>
+      <li>Set up an H2 database</li>
+      <li>Created database tables to match our object model</li>
+      <li>Implemented the DAO pattern for clean database access</li>
+      <li>Added CRUD operations for all our entities</li>
+      <li>Modified our web application to use the database</li>
+      <li>Created a way to initialize and test our database</li>
+      <li>Added proper error handling and user feedback</li>
+    </ul>
+
+    <p>
+      Your College Manager application now has full database persistence - all changes are saved and will survive
+      application restarts! This is a major step forward in creating a production-quality web application.
+    </p>
+
+    <div class="tip">
+      <strong>Key takeway:</strong> By using the DAO pattern and keeping our database code separate from our model
+      classes, we were able to add persistence without changing any of our existing model code. This is the power of
+      good separation of concerns!
+    </div>
+  </body>
+</html>
